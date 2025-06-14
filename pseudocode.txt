@@ -1,0 +1,456 @@
+CLASS AudioPreprocessor:
+  // Purpose: Preprocesses audio signals for enhancement, focusing on noise reduction and normalization.
+
+  // Attributes:
+  PROPERTY sample_rate: Integer (e.g., 16000)
+  PROPERTY frame_length: Integer (e.g., 1024)
+  PROPERTY hop_length: Integer (e.g., 512)
+  PROPERTY noise_reduce_strength: Float (e.g., 0.2)
+  PROPERTY normalize_audio: Boolean (e.g., True)
+
+  // Methods:
+  METHOD constructor(sample_rate, frame_length, hop_length, noise_reduce_strength, normalize_audio):
+    SET self.sample_rate = sample_rate
+    SET self.frame_length = frame_length
+    SET self.hop_length = hop_length
+    SET self.noise_reduce_strength = noise_reduce_strength
+    SET self.normalize_audio = normalize_audio
+  END METHOD
+
+  METHOD process(audio_array):
+    // Applies all preprocessing steps.
+    denoised_audio = CALL _reduce_noise(audio_array)
+    filtered_audio = CALL _apply_bandpass(denoised_audio)
+    IF self.normalize_audio THEN
+      normalized_audio = CALL _normalize(filtered_audio)
+      RETURN normalized_audio
+    ELSE
+      RETURN filtered_audio
+    END IF
+  END METHOD
+
+  METHOD _reduce_noise(audio_array):
+    // Reduces background noise using spectral gating.
+    // Steps: Compute STFT, estimate noise profile, create mask, apply mask, reconstruct audio.
+    RETURN denoised_audio_array
+  END METHOD
+
+  METHOD _apply_bandpass(audio_array):
+    // Applies a bandpass filter (e.g., 80Hz-8000Hz).
+    RETURN filtered_audio_array
+  END METHOD
+
+  METHOD _normalize(audio_array):
+    // Normalizes audio amplitude (e.g., peak normalization).
+    RETURN normalized_audio_array
+  END METHOD
+
+  METHOD analyze_signal_quality(audio_array):
+    // Calculates quality metrics like SNR, peak level, RMS, spectral centroid.
+    RETURN metrics_dictionary
+  END METHOD
+END CLASS
+
+---
+
+CLASS BatchProcessor:
+  // Purpose: Processes multiple audio files in parallel for disfluency enhancement.
+
+  // Attributes:
+  PROPERTY config: Dictionary (Configuration settings)
+  PROPERTY num_workers: Integer (Number of parallel threads)
+  PROPERTY device: String ("cuda" or "cpu")
+  PROPERTY preprocessor: Instance of AudioPreprocessor
+  PROPERTY feedback_collector: Instance of FeedbackCollector // Note: Definition not provided in context
+
+  // Methods:
+  METHOD constructor(config, num_workers):
+    SET self.config = config
+    SET self.num_workers = num_workers
+    DETERMINE device (cuda or cpu)
+    INITIALIZE self.preprocessor using config['preprocessing']
+    INITIALIZE self.feedback_collector using config['feedback']
+  END METHOD
+
+  METHOD process_batch(input_files_list, output_directory, enhancement_type):
+    // Processes a list of input audio files concurrently.
+    CREATE output_directory IF NOT EXISTS
+    INITIALIZE results_dictionary
+    CREATE thread_pool_executor with self.num_workers
+    FOR each input_file in input_files_list:
+      SUBMIT _process_single_file(input_file, output_directory, enhancement_type) to executor
+    END FOR
+    COLLECT results from completed tasks
+    IF config['feedback']['collect_metrics'] THEN
+      AGGREGATE metrics using _aggregate_metrics(results)
+    END IF
+    RETURN results_dictionary (including processed files and aggregated metrics)
+  END METHOD
+
+  METHOD _process_single_file(input_file, output_directory, enhancement_type):
+    // Processes one audio file.
+    INITIALIZE result_dictionary for this file
+    TRY:
+      GENERATE output_file path
+      CREATE HybridDisfluencyEnhancer instance using config // Note: Assumes HybridDisfluencyEnhancer is available
+      CALL enhancer.enhance(input_file, output_file, force_type=enhancement_type)
+      IF config['feedback']['collect_metrics'] THEN
+        LOAD original and enhanced audio
+        CALCULATE metrics using self.feedback_collector.collect_metrics(...)
+        STORE metrics in result_dictionary
+      END IF
+      SET result_dictionary status to 'success'
+    CATCH Exception as e:
+      SET result_dictionary status to 'failed'
+      SET result_dictionary error to string(e)
+    END TRY
+    RETURN result_dictionary
+  END METHOD
+
+  METHOD _aggregate_metrics(results_list):
+    // Aggregates metrics from individual file processing results.
+    INITIALIZE aggregated_metrics dictionary (total, success, failed counts, average improvements)
+    CALCULATE average improvements (SNR, speech rate, etc.) based on successful results
+    RETURN aggregated_metrics dictionary
+  END METHOD
+END CLASS
+
+---
+
+CLASS ConfigManager:
+  // Purpose: Manages loading, saving, accessing, and validating configuration settings.
+
+  // Attributes:
+  PROPERTY config_path: String (Path to the config file, optional)
+  PROPERTY config: Dictionary (Stores the configuration settings)
+  CONSTANT DEFAULT_CONFIG: Dictionary (Default configuration values)
+
+  // Methods:
+  METHOD constructor(config_path):
+    SET self.config_path = config_path
+    SET self.config = copy of DEFAULT_CONFIG
+    IF config_path exists THEN
+      CALL load_config()
+    END IF
+  END METHOD
+
+  METHOD load_config():
+    // Loads configuration from the file specified in self.config_path.
+    TRY:
+      OPEN self.config_path for reading
+      LOAD JSON data from file
+      CALL _update_nested_dict(self.config, loaded_data)
+    CATCH Exception:
+      PRINT error message
+      PRINT "Using default configuration"
+    END TRY
+  END METHOD
+
+  METHOD save_config(optional_save_path):
+    // Saves the current configuration to a JSON file.
+    DETERMINE save_path (use optional_save_path or self.config_path)
+    IF save_path is valid THEN
+      CREATE directory IF NOT EXISTS
+      OPEN save_path for writing
+      DUMP self.config to file as JSON (formatted)
+    END IF
+  END METHOD
+
+  METHOD get_config(optional_section_name):
+    // Returns the entire configuration or a specific section.
+    IF optional_section_name is provided THEN
+      RETURN self.config[optional_section_name] (or empty dict if not found)
+    ELSE
+      RETURN self.config
+    END IF
+  END METHOD
+
+  METHOD update_config(updates_dictionary, optional_section_name):
+    // Updates configuration values.
+    IF optional_section_name is provided THEN
+      GET or CREATE section in self.config
+      CALL _update_nested_dict(self.config[optional_section_name], updates_dictionary)
+    ELSE
+      CALL _update_nested_dict(self.config, updates_dictionary)
+    END IF
+  END METHOD
+
+  METHOD _update_nested_dict(target_dict, source_dict):
+    // Recursively updates values in target_dict with values from source_dict.
+    FOR key, value in source_dict:
+      IF value is a dictionary AND key exists in target_dict AND target_dict[key] is a dictionary THEN
+        RECURSIVELY CALL _update_nested_dict(target_dict[key], value)
+      ELSE
+        SET target_dict[key] = value
+      END IF
+    END FOR
+  END METHOD
+
+  METHOD validate_config():
+    // Checks if the current configuration values are valid (basic checks).
+    TRY:
+      ASSERT various config values meet criteria (e.g., > 0, within range)
+      RETURN True
+    CATCH Error:
+      RETURN False
+    END TRY
+  END METHOD
+END CLASS
+
+---
+
+CLASS DisfluencyEnhancer:
+  // Purpose: Enhances speech by removing long pauses and smoothing prolongations (likely targeting stuttering).
+
+  // Attributes:
+  PROPERTY sample_rate: Integer
+  PROPERTY silence_thresh: Float (Threshold for detecting silence)
+  PROPERTY min_silence_frames: Integer (Min duration of silence to remove, in frames)
+  PROPERTY prolongation_thresh: Float (Similarity threshold for detecting prolongations)
+  PROPERTY prolongation_window_frames: Integer (Window size for prolongation analysis, in frames)
+
+  // Methods:
+  METHOD constructor(sample_rate, silence_thresh, min_silence_duration, prolongation_thresh, prolongation_window):
+    SET self.sample_rate = sample_rate
+    SET self.silence_thresh = silence_thresh
+    CALCULATE and SET self.min_silence_frames from min_silence_duration
+    SET self.prolongation_thresh = prolongation_thresh
+    CALCULATE and SET self.prolongation_window_frames from prolongation_window
+  END METHOD
+
+  METHOD enhance(audio_path, output_path):
+    // Loads audio, applies enhancements, and saves the result.
+    LOAD audio from audio_path
+    audio_nopause = CALL _remove_pauses(audio)
+    audio_smoothed = CALL _smooth_prolongations(audio_nopause)
+    SAVE audio_smoothed to output_path
+  END METHOD
+
+  METHOD _remove_pauses(audio_array):
+    // Identifies and removes silent segments longer than min_silence_frames.
+    // Steps: Calculate frame energy, identify silent frames, find continuous silent regions, reconstruct audio without long silences (optionally keeping short silence).
+    RETURN audio_array_without_long_pauses
+  END METHOD
+
+  METHOD _smooth_prolongations(audio_array):
+    // Detects and attenuates prolonged sounds (e.g., sustained phonemes).
+    // Steps: Calculate MFCCs, compute frame-to-frame similarity, identify regions of high similarity (prolongations), apply smoothing (e.g., tapering envelope) to these regions.
+    RETURN audio_array_with_smoothed_prolongations
+  END METHOD
+END CLASS
+
+---
+
+CLASS ClutteringEnhancer:
+  // Purpose: Enhances speech affected by cluttering, likely using a deep learning model.
+
+  // Attributes:
+  PROPERTY model: Instance of ClutteringEnhancerModel (PyTorch model)
+  PROPERTY device: String ("cuda" or "cpu")
+  PROPERTY n_fft: Integer (FFT size for STFT)
+  PROPERTY hop_length: Integer (Hop length for STFT)
+  PROPERTY sample_rate: Integer
+
+  // Methods:
+  METHOD constructor(model_path):
+    SET self.n_fft, self.hop_length, self.sample_rate (likely from config or defaults)
+    DETERMINE device (cuda or cpu)
+    INITIALIZE self.model = ClutteringEnhancerModel()
+    IF model_path is provided THEN
+      LOAD model state from model_path onto self.device
+    END IF
+    SET model to evaluation mode
+  END METHOD
+
+  METHOD enhance(audio_path, output_path):
+    // Loads audio, processes it through the cluttering model, and saves the result.
+    LOAD audio from audio_path
+    PREPROCESS audio (e.g., convert to STFT magnitude/phase features)
+    CONVERT features to Tensor and move to self.device
+    RUN features through self.model (inference)
+    GET enhanced features (magnitude/phase) from model output
+    POSTPROCESS features (e.g., convert back to time-domain audio using inverse STFT)
+    SAVE enhanced audio to output_path
+  END METHOD
+
+  METHOD _preprocess(audio_array):
+    // Converts raw audio to model input features (e.g., log-magnitude and phase STFT).
+    RETURN features_tensor
+  END METHOD
+
+  METHOD _postprocess(enhanced_features, original_phase): // Phase might be needed
+    // Converts model output features back to time-domain audio.
+    RETURN enhanced_audio_array
+  END METHOD
+END CLASS
+
+---
+
+CLASS DisfluencyTriage:
+  // Purpose: Classifies the type of disfluency (e.g., stuttering vs. cluttering) in an audio signal.
+
+  // Attributes:
+  PROPERTY classifier: Machine Learning Model (e.g., loaded from joblib file)
+  PROPERTY sample_rate: Integer
+  // Potentially other thresholds from config (tempo, rhythm, energy variance) - not explicitly shown as properties but used in classify
+
+  // Methods:
+  METHOD constructor(classifier_path):
+    SET self.sample_rate (likely default or from config)
+    IF classifier_path is provided THEN
+      LOAD self.classifier from classifier_path
+    ELSE
+      // Handle case where no classifier is provided (e.g., use rule-based or raise error)
+      SET self.classifier = None
+    END IF
+  END METHOD
+
+  METHOD classify(audio_path_or_array):
+    // Predicts the disfluency type.
+    IF input is audio_path THEN
+      LOAD audio array
+    END IF
+    features = CALL _extract_features(audio_array)
+    IF self.classifier is not None THEN
+      PREDICT type using self.classifier with features
+      RETURN predicted_type // e.g., "stuttering" or "cluttering"
+    ELSE
+      // Implement rule-based classification based on features (tempo, energy variance etc.)
+      IF features meet cluttering criteria THEN
+        RETURN "cluttering"
+      ELSE
+        RETURN "stuttering"
+      END IF
+    END IF
+  END METHOD
+
+  METHOD _extract_features(audio_array):
+    // Extracts acoustic features relevant for distinguishing disfluency types.
+    // Features: MFCC means/variances, spectral contrast means, tempo, RMS energy variance.
+    RETURN feature_vector
+  END METHOD
+END CLASS
+
+---
+
+CLASS HybridDisfluencyEnhancer:
+  // Purpose: Combines triage and specific enhancers to apply the appropriate processing.
+
+  // Attributes:
+  PROPERTY triage: Instance of DisfluencyTriage
+  PROPERTY stuttering_enhancer: Instance of DisfluencyEnhancer
+  PROPERTY cluttering_enhancer: Instance of ClutteringEnhancer
+
+  // Methods:
+  METHOD constructor(classifier_path, cluttering_model_path):
+    INITIALIZE self.triage = DisfluencyTriage(classifier_path)
+    INITIALIZE self.stuttering_enhancer = DisfluencyEnhancer() // Uses default params or gets from config
+    INITIALIZE self.cluttering_enhancer = ClutteringEnhancer(cluttering_model_path)
+  END METHOD
+
+  METHOD enhance(audio_path, output_path, force_type):
+    // Classifies disfluency (unless forced) and routes to the correct enhancer.
+    IF force_type is None THEN
+      disfluency_type = CALL self.triage.classify(audio_path)
+    ELSE
+      disfluency_type = force_type
+    END IF
+
+    PRINT detected/forced type
+
+    IF disfluency_type is "stuttering" THEN
+      PRINT "Applying stuttering enhancement..."
+      CALL self.stuttering_enhancer.enhance(audio_path, output_path)
+    ELSE // Assumed cluttering
+      PRINT "Applying cluttering enhancement..."
+      CALL self.cluttering_enhancer.enhance(audio_path, output_path)
+    END IF
+  END METHOD
+END CLASS
+
+---
+
+CLASS RealTimeProcessor:
+  // Purpose: Handles streaming audio input/output for real-time enhancement.
+
+  // Attributes:
+  PROPERTY sample_rate: Integer
+  PROPERTY buffer_size: Integer
+  PROPERTY channels: Integer
+  PROPERTY dtype: Data Type (e.g., float32)
+  PROPERTY input_queue: Queue (Stores incoming audio chunks)
+  PROPERTY output_queue: Queue (Stores processed audio chunks)
+  PROPERTY preprocessor: Instance of AudioPreprocessor
+  PROPERTY _running: Boolean (Indicates if processing is active)
+  PROPERTY _processing_thread: Thread (Runs the audio processing loop)
+  PROPERTY _stream: SoundDevice Stream Object (Handles audio I/O)
+
+  // Methods:
+  METHOD constructor(sample_rate, buffer_size, channels, dtype):
+    SET self.sample_rate, self.buffer_size, self.channels, self.dtype
+    INITIALIZE self.input_queue, self.output_queue
+    INITIALIZE self.preprocessor with sample_rate
+    SET self._running = False
+    SET self._processing_thread = None
+    SET self._stream = None
+  END METHOD
+
+  METHOD start(optional_processing_callback):
+    // Starts the audio stream and processing thread.
+    IF self._running THEN RETURN
+    SET self._running = True
+    CREATE and START self._processing_thread, target=_process_audio, args=(optional_processing_callback,)
+    CREATE and START self._stream using sounddevice, callback=_audio_callback
+    PRINT "Real-time processing started"
+  END METHOD
+
+  METHOD stop():
+    // Stops the audio stream and processing thread.
+    IF NOT self._running THEN RETURN
+    SET self._running = False
+    IF self._stream exists THEN
+      STOP and CLOSE self._stream
+    END IF
+    IF self._processing_thread exists THEN
+      WAIT for self._processing_thread to finish
+    END IF
+    PRINT "Real-time processing stopped"
+  END METHOD
+
+  METHOD _audio_callback(input_data, output_data, frames, time, status):
+    // Called by the audio stream; puts input in queue, gets output from queue.
+    IF status indicates error THEN PRINT status
+    PUT input_data into self.input_queue
+    TRY:
+      GET processed_data from self.output_queue (non-blocking)
+      SET output_data = processed_data
+    CATCH Queue Empty:
+      SET output_data = silence (zeros)
+    END TRY
+  END METHOD
+
+  METHOD _process_audio(optional_processing_callback):
+    // Runs in a separate thread; processes audio chunks from input queue.
+    INITIALIZE overlap_buffer
+    WHILE self._running:
+      TRY:
+        GET chunk from self.input_queue (with timeout)
+        CREATE processing_frame by combining overlap_buffer and chunk
+        processed_frame = CALL self.preprocessor.process(processing_frame)
+        IF optional_processing_callback exists THEN
+          processed_frame = CALL optional_processing_callback(processed_frame)
+        END IF
+        UPDATE overlap_buffer with end of processed_frame
+        PUT beginning of processed_frame into self.output_queue
+      CATCH Queue Empty:
+        CONTINUE // No data yet
+      CATCH Exception as e:
+        PRINT error message
+      END TRY
+    END WHILE
+  END METHOD
+
+  METHOD get_input_latency(): RETURN stream input latency
+  METHOD get_output_latency(): RETURN stream output latency
+  METHOD is_running(): RETURN self._running
+END CLASS
